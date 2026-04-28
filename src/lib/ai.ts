@@ -1,15 +1,23 @@
 import { EXCALIDRAW_SYSTEM_PROMPT } from './prompt'
 import type { ElementSummary } from '@/components/excalidraw/wrapper'
+import type { Attachment } from './file-utils'
 
 export interface AIConfig {
   apiKey: string
   baseURL: string
   model: string
+  visionModel?: string  // 用于图片理解的模型，如 glm-4v, gpt-4o 等
+}
+
+export interface ContentPart {
+  type: 'text' | 'image_url'
+  text?: string
+  image_url?: { url: string }
 }
 
 export interface ChatMessage {
   role: 'system' | 'user' | 'assistant' | 'tool'
-  content: string
+  content: string | ContentPart[]
   tool_calls?: ToolCall[]
   tool_call_id?: string
 }
@@ -120,6 +128,7 @@ export function getAIConfig(): AIConfig {
     apiKey: import.meta.env.VITE_AI_API_KEY || '',
     baseURL: import.meta.env.VITE_AI_BASE_URL || '',
     model: import.meta.env.VITE_AI_MODEL || 'gpt-4o',
+    visionModel: import.meta.env.VITE_AI_VISION_MODEL || '',
   }
 
   // 如果环境变量已配置，直接返回
@@ -136,6 +145,7 @@ export function getAIConfig(): AIConfig {
         apiKey: parsed.apiKey || envConfig.apiKey,
         baseURL: parsed.baseURL || envConfig.baseURL,
         model: parsed.model || envConfig.model,
+        visionModel: parsed.visionModel || envConfig.visionModel,
       }
     }
   } catch {
@@ -213,6 +223,51 @@ ${elementsContext}
 }
 
 /**
+ * 构建包含附件的用户消息内容
+ */
+function buildUserContent(
+  textMessage: string,
+  attachments?: Attachment[]
+): string | ContentPart[] {
+  if (!attachments || attachments.length === 0) {
+    return textMessage
+  }
+
+  const parts: ContentPart[] = []
+
+  // Build text from documents
+  const docTexts = attachments
+    .filter(a => a.type === 'document' && a.textContent)
+    .map(a => `[文件: ${a.name}]\n${a.textContent}`)
+    .join('\n\n')
+
+  // Build image metadata as fallback text context
+  const imageInfos = attachments
+    .filter(a => a.type === 'image')
+    .map(a => {
+      const parts = [`文件: ${a.name}`, `大小: ${(a.size / 1024).toFixed(1)}KB`]
+      if (a.width && a.height) parts.push(`尺寸: ${a.width}x${a.height}`)
+      return parts.join(', ')
+    })
+  const imageContext = imageInfos.length > 0
+    ? `[用户上传了 ${imageInfos.length} 张图片: ${imageInfos.join('; ')}]`
+    : ''
+
+  const fullText = [docTexts, imageContext, textMessage].filter(Boolean).join('\n\n')
+
+  parts.push({ type: 'text', text: fullText })
+
+  // Add image content parts for vision-capable models
+  for (const attachment of attachments) {
+    if (attachment.type === 'image' && attachment.dataUrl) {
+      parts.push({ type: 'image_url', image_url: { url: attachment.dataUrl } })
+    }
+  }
+
+  return parts
+}
+
+/**
  * 流式调用 AI API（支持工具调用）
  */
 export async function streamChat(
@@ -221,7 +276,8 @@ export async function streamChat(
   onError?: (error: Error) => void,
   config?: AIConfig,
   selectedElements?: ElementSummary[],
-  toolExecutor?: ToolExecutor
+  toolExecutor?: ToolExecutor,
+  attachments?: Attachment[]
 ): Promise<void> {
   const finalConfig = config || getAIConfig()
 
@@ -230,16 +286,26 @@ export async function streamChat(
     return
   }
 
+  // 当有图片附件时，使用 vision 模型（如果配置了）
+  const hasImages = attachments?.some(a => a.type === 'image')
+  const chatConfig = { ...finalConfig }
+  if (hasImages && finalConfig.visionModel) {
+    chatConfig.model = finalConfig.visionModel
+  }
+
   // 构建带有选中元素上下文的用户消息
   const contextualMessage = buildUserMessage(userMessage, selectedElements)
 
+  // 构建多模态内容
+  const userContent = buildUserContent(contextualMessage, attachments)
+
   const messages: ChatMessage[] = [
     { role: 'system', content: EXCALIDRAW_SYSTEM_PROMPT },
-    { role: 'user', content: contextualMessage },
+    { role: 'user', content: userContent },
   ]
 
   // 递归处理，支持多轮工具调用
-  await processChat(messages, finalConfig, onChunk, onError, toolExecutor)
+  await processChat(messages, chatConfig, onChunk, onError, toolExecutor)
 }
 
 /**

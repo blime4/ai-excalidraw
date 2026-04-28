@@ -1,10 +1,12 @@
 import { useState, useEffect, useCallback } from 'react'
+import type { AttachmentMeta } from '@/lib/file-utils'
 
 export interface ChatMessage {
   id: string
   role: 'user' | 'assistant'
   content: string
   timestamp: number
+  attachments?: AttachmentMeta[]
 }
 
 export interface ChatSession {
@@ -102,25 +104,27 @@ export function useChatHistory() {
   const addMessage = useCallback((
     sessionId: string,
     role: 'user' | 'assistant',
-    content: string
+    content: string,
+    attachments?: AttachmentMeta[]
   ): string => {
     const messageId = generateId()
     setSessions(prev => prev.map(session => {
       if (session.id !== sessionId) return session
-      
+
       const newMessage: ChatMessage = {
         id: messageId,
         role,
         content,
         timestamp: Date.now(),
+        ...(attachments && attachments.length > 0 ? { attachments } : {}),
       }
-      
+
       // 更新标题（使用第一条用户消息）
       let title = session.title
       if (role === 'user' && session.messages.length === 0) {
         title = content.slice(0, 30) + (content.length > 30 ? '...' : '')
       }
-      
+
       return {
         ...session,
         title,
