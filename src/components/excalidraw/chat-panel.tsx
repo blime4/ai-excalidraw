@@ -3,12 +3,12 @@ import { Button } from '@/components/ui/button'
 import { Textarea } from '@/components/ui/textarea'
 import { Card } from '@/components/ui/card'
 import { cn } from '@/lib/utils'
-import { 
-  Send, 
-  Loader2, 
-  Plus, 
-  Trash2, 
-  MessageSquare, 
+import {
+  Send,
+  Loader2,
+  Plus,
+  Trash2,
+  MessageSquare,
   ChevronLeft,
   ChevronRight,
   Sparkles,
@@ -21,6 +21,9 @@ import { useChatHistory, type ChatMessage } from './use-chat-history'
 import { parseExcalidrawElements, type ParsedElement } from './element-parser'
 import { streamChat, isConfigValid, getAIConfig, type ToolExecutor } from '@/lib/ai'
 import type { ExcalidrawWrapperRef } from './wrapper'
+import type { Attachment } from '@/lib/file-utils'
+import { toAttachmentMeta } from '@/lib/file-utils'
+import { FileAttachmentArea, FileInputButton, AttachmentPreview } from '@/components/ui/file-attachment'
 
 interface ChatPanelProps {
   className?: string
@@ -35,6 +38,7 @@ export function ChatPanel({ className, onElementsGenerated, excalidrawRef }: Cha
   const [isComposing, setIsComposing] = useState(false) // 输入法组合状态
   const [selectedCount, setSelectedCount] = useState(0) // 选中的元素数量
   const [selectedElementIds, setSelectedElementIds] = useState<string[]>([]) // 选中元素的ID列表
+  const [attachments, setAttachments] = useState<Attachment[]>([])
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
   
@@ -115,7 +119,7 @@ export function ChatPanel({ className, onElementsGenerated, excalidrawRef }: Cha
 
   // 发送消息
   const handleSend = async () => {
-    if (!input.trim() || isLoading) return
+    if ((!input.trim() && attachments.length === 0) || isLoading) return
 
     // 检查配置
     if (!isConfigValid(getAIConfig())) {
@@ -123,8 +127,10 @@ export function ChatPanel({ className, onElementsGenerated, excalidrawRef }: Cha
       return
     }
 
-    const userMessage = input.trim()
+    const userMessage = input.trim() || '(已上传附件)'
+    const currentAttachments = attachments
     setInput('')
+    setAttachments([])
     setIsLoading(true)
 
     // 确保有会话
@@ -133,8 +139,9 @@ export function ChatPanel({ className, onElementsGenerated, excalidrawRef }: Cha
       sessionId = createSession()
     }
 
-    // 添加用户消息
-    addMessage(sessionId, 'user', userMessage)
+    // 添加用户消息（包含附件元信息）
+    const attachmentMetas = currentAttachments.map(toAttachmentMeta)
+    addMessage(sessionId, 'user', userMessage, attachmentMetas.length > 0 ? attachmentMetas : undefined)
 
     // 添加空的助手消息占位
     const assistantMessageId = addMessage(sessionId, 'assistant', '')
@@ -170,7 +177,8 @@ export function ChatPanel({ className, onElementsGenerated, excalidrawRef }: Cha
       },
       undefined,
       selectedElements, // 传递选中的元素
-      toolExecutor // 传递工具执行器
+      toolExecutor, // 传递工具执行器
+      currentAttachments.length > 0 ? currentAttachments : undefined // 传递附件
     )
 
     // 最终解析
@@ -180,6 +188,16 @@ export function ChatPanel({ className, onElementsGenerated, excalidrawRef }: Cha
     }
 
     setIsLoading(false)
+  }
+
+  // 添加附件
+  const handleAddAttachments = (newAttachments: Attachment[]) => {
+    setAttachments(prev => [...prev, ...newAttachments])
+  }
+
+  // 移除附件
+  const handleRemoveAttachment = (id: string) => {
+    setAttachments(prev => prev.filter(a => a.id !== id))
   }
 
   // 处理按键（输入法激活时不发送）
@@ -356,30 +374,41 @@ export function ChatPanel({ className, onElementsGenerated, excalidrawRef }: Cha
 
         {/* 输入区 */}
         <div className="p-3 border-t border-border bg-card">
-          <Card className="flex items-end gap-2 p-2 bg-secondary/5 border-border/50">
-            <Textarea
-              ref={textareaRef}
-              value={input}
-              onChange={(e) => setInput(e.target.value)}
-              onKeyDown={handleKeyDown}
-              onCompositionStart={() => setIsComposing(true)}
-              onCompositionEnd={() => setIsComposing(false)}
-              placeholder="描述你想要绘制的图形..."
-              className="min-h-[40px] max-h-[120px] resize-none border-0 bg-transparent focus-visible:ring-0 p-2"
-              disabled={isLoading}
+          <Card className="flex flex-col p-2 bg-secondary/5 border-border/50">
+            <FileAttachmentArea
+              attachments={attachments}
+              onRemove={handleRemoveAttachment}
+              className="px-1"
             />
-            <Button
-              size="icon"
-              onClick={handleSend}
-              disabled={!input.trim() || isLoading}
-              className="shrink-0 w-9 h-9"
-            >
-              {isLoading ? (
-                <Loader2 className="w-4 h-4 animate-spin" />
-              ) : (
-                <Send className="w-4 h-4" />
-              )}
-            </Button>
+            <div className="flex items-end gap-1">
+              <FileInputButton
+                onFilesSelected={handleAddAttachments}
+                disabled={isLoading}
+              />
+              <Textarea
+                ref={textareaRef}
+                value={input}
+                onChange={(e) => setInput(e.target.value)}
+                onKeyDown={handleKeyDown}
+                onCompositionStart={() => setIsComposing(true)}
+                onCompositionEnd={() => setIsComposing(false)}
+                placeholder="描述你想要绘制的图形..."
+                className="min-h-[40px] max-h-[120px] resize-none border-0 bg-transparent focus-visible:ring-0 p-2"
+                disabled={isLoading}
+              />
+              <Button
+                size="icon"
+                onClick={handleSend}
+                disabled={(!input.trim() && attachments.length === 0) || isLoading}
+                className="shrink-0 w-9 h-9"
+              >
+                {isLoading ? (
+                  <Loader2 className="w-4 h-4 animate-spin" />
+                ) : (
+                  <Send className="w-4 h-4" />
+                )}
+              </Button>
+            </div>
           </Card>
         </div>
       </div>
@@ -392,7 +421,7 @@ export function ChatPanel({ className, onElementsGenerated, excalidrawRef }: Cha
  */
 function MessageBubble({ message }: { message: ChatMessage }) {
   const isUser = message.role === 'user'
-  
+
   return (
     <div className={cn('flex', isUser ? 'justify-end' : 'justify-start')}>
       <div
@@ -403,6 +432,9 @@ function MessageBubble({ message }: { message: ChatMessage }) {
             : 'bg-secondary/50 text-foreground rounded-bl-md'
         )}
       >
+        {isUser && message.attachments && message.attachments.length > 0 && (
+          <AttachmentPreview attachments={message.attachments} />
+        )}
         <div className="whitespace-pre-wrap break-words">
           {isUser ? (
             message.content

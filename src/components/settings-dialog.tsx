@@ -16,6 +16,7 @@ export function SettingsDialog({ onConfigChange }: SettingsDialogProps) {
     apiKey: '',
     baseURL: '',
     model: 'gpt-4o',
+    visionModel: '',
   })
   const [saved, setSaved] = useState(false)
 
@@ -94,6 +95,18 @@ export function SettingsDialog({ onConfigChange }: SettingsDialogProps) {
                 onChange={(e) => setConfig({ ...config, model: e.target.value })}
                 placeholder="gpt-4o"
               />
+            </div>
+
+            <div className="space-y-2">
+              <label className="text-sm font-medium">Vision 模型 <span className="text-muted-foreground font-normal">(可选)</span></label>
+              <Input
+                value={config.visionModel || ''}
+                onChange={(e) => setConfig({ ...config, visionModel: e.target.value })}
+                placeholder="gpt-4o / glm-4v 等"
+              />
+              <p className="text-xs text-muted-foreground">
+                上传图片时使用的模型，需要支持图片理解。留空则使用上方默认模型。
+              </p>
             </div>
           </div>
 

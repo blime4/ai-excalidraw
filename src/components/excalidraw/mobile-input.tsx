@@ -6,6 +6,9 @@ import { Send, Loader2, Trash2 } from 'lucide-react'
 import { useChatHistory } from './use-chat-history'
 import { parseExcalidrawElements, type ParsedElement } from './element-parser'
 import { streamChat, isConfigValid, getAIConfig } from '@/lib/ai'
+import type { Attachment } from '@/lib/file-utils'
+import { toAttachmentMeta } from '@/lib/file-utils'
+import { FileAttachmentArea, FileInputButton } from '@/components/ui/file-attachment'
 
 interface MobileInputProps {
   onElementsGenerated?: (elements: ParsedElement[]) => void
@@ -14,17 +17,18 @@ interface MobileInputProps {
   showToast?: (message: string, duration?: number) => void
 }
 
-export function MobileInput({ 
-  onElementsGenerated, 
+export function MobileInput({
+  onElementsGenerated,
   onLoadingChange,
   onClearCanvas,
-  showToast 
+  showToast
 }: MobileInputProps) {
   const [input, setInput] = useState('')
   const [isLoading, setIsLoading] = useState(false)
   const [isComposing, setIsComposing] = useState(false)
+  const [attachments, setAttachments] = useState<Attachment[]>([])
   const textareaRef = useRef<HTMLTextAreaElement>(null)
-  
+
   const {
     currentSessionId,
     createSession,
@@ -40,7 +44,7 @@ export function MobileInput({
 
   // 发送消息
   const handleSend = async () => {
-    if (!input.trim() || isLoading) return
+    if ((!input.trim() && attachments.length === 0) || isLoading) return
 
     // 检查配置
     if (!isConfigValid(getAIConfig())) {
@@ -48,8 +52,10 @@ export function MobileInput({
       return
     }
 
-    const userMessage = input.trim()
+    const userMessage = input.trim() || '(已上传附件)'
+    const currentAttachments = attachments
     setInput('')
+    setAttachments([])
     updateLoading(true)
 
     // 确保有会话
@@ -58,8 +64,9 @@ export function MobileInput({
       sessionId = createSession()
     }
 
-    // 添加用户消息
-    addMessage(sessionId, 'user', userMessage)
+    // 添加用户消息（包含附件元信息）
+    const attachmentMetas = currentAttachments.map(toAttachmentMeta)
+    addMessage(sessionId, 'user', userMessage, attachmentMetas.length > 0 ? attachmentMetas : undefined)
 
     // 添加空的助手消息占位
     const assistantMessageId = addMessage(sessionId, 'assistant', '')
@@ -86,7 +93,11 @@ export function MobileInput({
         console.error('Chat error:', error)
         updateMessage(sessionId!, assistantMessageId, `抱歉，发生了错误：${error.message}`)
         showToast?.('生成失败，请重试', 2000)
-      }
+      },
+      undefined,
+      undefined,
+      undefined,
+      currentAttachments.length > 0 ? currentAttachments : undefined
     )
 
     // 最终解析
@@ -112,49 +123,70 @@ export function MobileInput({
     }
   }
 
+  // 添加附件
+  const handleAddAttachments = (newAttachments: Attachment[]) => {
+    setAttachments(prev => [...prev, ...newAttachments])
+  }
+
+  // 移除附件
+  const handleRemoveAttachment = (id: string) => {
+    setAttachments(prev => prev.filter(a => a.id !== id))
+  }
+
   return (
     <div className="border-t border-border bg-card/95 backdrop-blur supports-[backdrop-filter]:bg-card/80 p-3 safe-area-inset-bottom">
-      <Card className="flex items-end gap-2 p-2 bg-secondary/5 border-border/50">
-        {/* 清空按钮 */}
-        <Button
-          variant="ghost"
-          size="icon"
-          className="shrink-0 w-9 h-9 text-destructive hover:text-destructive hover:bg-destructive/10"
-          onClick={onClearCanvas}
-          disabled={isLoading}
-          title="清空画布"
-        >
-          <Trash2 className="w-4 h-4" />
-        </Button>
-
-        {/* 输入框 */}
-        <Textarea
-          ref={textareaRef}
-          value={input}
-          onChange={(e) => setInput(e.target.value)}
-          onKeyDown={handleKeyDown}
-          onCompositionStart={() => setIsComposing(true)}
-          onCompositionEnd={() => setIsComposing(false)}
-          placeholder="描述你想要绘制的图形..."
-          className="min-h-[40px] max-h-[80px] resize-none border-0 bg-transparent focus-visible:ring-0 p-2 text-base"
-          disabled={isLoading}
+      <Card className="flex flex-col p-2 bg-secondary/5 border-border/50">
+        <FileAttachmentArea
+          attachments={attachments}
+          onRemove={handleRemoveAttachment}
         />
+        <div className="flex items-end gap-1">
+          {/* 清空按钮 */}
+          <Button
+            variant="ghost"
+            size="icon"
+            className="shrink-0 w-9 h-9 text-destructive hover:text-destructive hover:bg-destructive/10"
+            onClick={onClearCanvas}
+            disabled={isLoading}
+            title="清空画布"
+          >
+            <Trash2 className="w-4 h-4" />
+          </Button>
 
-        {/* 发送按钮 */}
-        <Button
-          size="icon"
-          onClick={handleSend}
-          disabled={!input.trim() || isLoading}
-          className="shrink-0 w-9 h-9"
-        >
-          {isLoading ? (
-            <Loader2 className="w-4 h-4 animate-spin" />
-          ) : (
-            <Send className="w-4 h-4" />
-          )}
-        </Button>
+          <FileInputButton
+            onFilesSelected={handleAddAttachments}
+            onError={(msg) => showToast?.(msg, 3000)}
+            disabled={isLoading}
+          />
+
+          {/* 输入框 */}
+          <Textarea
+            ref={textareaRef}
+            value={input}
+            onChange={(e) => setInput(e.target.value)}
+            onKeyDown={handleKeyDown}
+            onCompositionStart={() => setIsComposing(true)}
+            onCompositionEnd={() => setIsComposing(false)}
+            placeholder="描述你想要绘制的图形..."
+            className="min-h-[40px] max-h-[80px] resize-none border-0 bg-transparent focus-visible:ring-0 p-2 text-base"
+            disabled={isLoading}
+          />
+
+          {/* 发送按钮 */}
+          <Button
+            size="icon"
+            onClick={handleSend}
+            disabled={(!input.trim() && attachments.length === 0) || isLoading}
+            className="shrink-0 w-9 h-9"
+          >
+            {isLoading ? (
+              <Loader2 className="w-4 h-4 animate-spin" />
+            ) : (
+              <Send className="w-4 h-4" />
+            )}
+          </Button>
+        </div>
       </Card>
     </div>
   )
 }
-
