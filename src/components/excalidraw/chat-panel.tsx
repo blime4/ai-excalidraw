@@ -140,7 +140,6 @@ export function ChatPanel({ className, onElementsGenerated, excalidrawRef }: Cha
     const assistantMessageId = addMessage(sessionId, 'assistant', '')
 
     let fullText = ''
-    let processedLength = 0
 
     // 获取选中的元素（如果有）
     const selectedElements = excalidrawRef?.current?.getSelectedElementsSummary() || []
@@ -148,7 +147,11 @@ export function ChatPanel({ className, onElementsGenerated, excalidrawRef }: Cha
     // 创建工具执行器
     const toolExecutor: ToolExecutor = {
       getCanvasElements: () => excalidrawRef?.current?.getCanvasState() || [],
-      deleteElements: (ids: string[]) => excalidrawRef?.current?.deleteElements(ids) || { deleted: [], notFound: ids }
+      deleteElements: (ids: string[]) => excalidrawRef?.current?.deleteElements(ids) || { deleted: [], notFound: ids },
+      createElements: (elements) => {
+        console.log('[ai-excalidraw] create_elements called with:', elements.length, 'elements')
+        onElementsGenerated?.(elements as ParsedElement[])
+      }
     }
 
     await streamChat(
@@ -157,11 +160,14 @@ export function ChatPanel({ className, onElementsGenerated, excalidrawRef }: Cha
         fullText += chunk
         updateMessage(sessionId!, assistantMessageId, fullText)
 
-        // 解析元素并渲染
-        const { elements, remainingBuffer } = parseExcalidrawElements(fullText, processedLength)
+        // Strip thinking tags and code blocks before parsing
+        const { main } = parseThinkingContent(fullText)
+        const cleanText = main.replace(/```\w*\n?/g, '').replace(/```/g, '')
+
+        const { elements } = parseExcalidrawElements(cleanText, 0)
         if (elements.length > 0) {
+          console.log('[ai-excalidraw] Stream parsed:', elements.length)
           onElementsGenerated?.(elements)
-          processedLength = fullText.length - remainingBuffer.length
         }
       },
       (error) => {
@@ -173,9 +179,12 @@ export function ChatPanel({ className, onElementsGenerated, excalidrawRef }: Cha
       toolExecutor // 传递工具执行器
     )
 
-    // 最终解析
-    const { elements } = parseExcalidrawElements(fullText, processedLength)
+    // Final parse with preprocessed text
+    const { main: finalMain } = parseThinkingContent(fullText)
+    const finalClean = finalMain.replace(/```\w*\n?/g, '').replace(/```/g, '')
+    const { elements } = parseExcalidrawElements(finalClean, 0)
     if (elements.length > 0) {
+      console.log('[ai-excalidraw] Final parsed:', elements.length)
       onElementsGenerated?.(elements)
     }
 

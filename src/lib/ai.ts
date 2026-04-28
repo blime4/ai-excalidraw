@@ -29,6 +29,7 @@ export interface ToolCall {
 export interface ToolExecutor {
   getCanvasElements: () => ElementSummary[]
   deleteElements: (ids: string[]) => { deleted: string[], notFound: string[] }
+  createElements?: (elements: Record<string, unknown>[]) => void
 }
 
 /**
@@ -62,6 +63,47 @@ const TOOLS = [
           }
         },
         required: ['ids']
+      }
+    }
+  },
+  {
+    type: 'function' as const,
+    function: {
+      name: 'create_elements',
+      description: '在画布上创建 Excalidraw 元素。每次可以创建一个或多个元素。这是输出图形的唯一方式，必须通过此工具创建元素。',
+      parameters: {
+        type: 'object',
+        properties: {
+          elements: {
+            type: 'array',
+            description: '要创建的 Excalidraw 元素数组',
+            items: {
+              type: 'object',
+              properties: {
+                id: { type: 'string', description: '元素唯一ID，如 "rect-1"' },
+                type: { type: 'string', enum: ['rectangle', 'ellipse', 'diamond', 'text', 'arrow', 'line'], description: '元素类型' },
+                x: { type: 'number', description: 'X 坐标' },
+                y: { type: 'number', description: 'Y 坐标' },
+                width: { type: 'number', description: '宽度' },
+                height: { type: 'number', description: '高度' },
+                text: { type: 'string', description: '文本内容（text 类型必须有）' },
+                fontSize: { type: 'number', description: '字号，默认 20' },
+                fontFamily: { type: 'number', description: '字体：5=手写体(首选), 2=无衬线, 3=等宽' },
+                backgroundColor: { type: 'string', description: '背景色，如 "#a5d8ff"' },
+                strokeColor: { type: 'string', description: '边框色，如 "#1e1e1e"' },
+                fillStyle: { type: 'string', enum: ['solid', 'hachure', 'cross-hatch'], description: '填充样式' },
+                points: { type: 'array', items: { type: 'array', items: { type: 'number' } }, description: '箭头/线条的坐标点偏移数组' },
+                endArrowhead: { type: 'string', enum: ['arrow', 'triangle', 'bar', 'dot', 'diamond'], description: '箭头头部类型' },
+                boundElements: { type: 'array', description: '绑定元素，如 [{"type":"text","id":"t1"}]' },
+                containerId: { type: 'string', description: '容器 ID（形状内文字使用）' },
+                textAlign: { type: 'string', enum: ['left', 'center', 'right'], description: '文字对齐' },
+                verticalAlign: { type: 'string', enum: ['top', 'middle', 'bottom'], description: '垂直对齐' },
+              },
+              required: ['id', 'type', 'x', 'y', 'width', 'height']
+            }
+          }
+        },
+        required: ['elements']
       }
     }
   }
@@ -209,7 +251,7 @@ async function processChat(
   onChunk: (content: string) => void,
   onError?: (error: Error) => void,
   toolExecutor?: ToolExecutor,
-  maxToolCalls = 3  // 最大工具调用次数，防止无限循环
+  maxToolCalls = 5  // 最大工具调用次数，防止无限循环
 ): Promise<void> {
   try {
     const requestBody: Record<string, unknown> = {
@@ -389,15 +431,33 @@ function executeToolCall(toolCall: ToolCall, executor: ToolExecutor): string {
         }
         const result = executor.deleteElements(ids)
         if (result.deleted.length === 0) {
-          return JSON.stringify({ 
+          return JSON.stringify({
             message: '没有找到可删除的元素',
-            notFound: result.notFound 
+            notFound: result.notFound
           })
         }
         return JSON.stringify({
           message: `成功删除 ${result.deleted.length} 个元素`,
           deleted: result.deleted,
           notFound: result.notFound.length > 0 ? result.notFound : undefined
+        })
+      } catch (e) {
+        return JSON.stringify({ error: `参数解析失败: ${e}` })
+      }
+    }
+    case 'create_elements': {
+      try {
+        const parsed = JSON.parse(args)
+        const elements = parsed.elements as Record<string, unknown>[]
+        if (!Array.isArray(elements) || elements.length === 0) {
+          return JSON.stringify({ error: '请提供要创建的元素数组' })
+        }
+        if (executor.createElements) {
+          executor.createElements(elements)
+        }
+        return JSON.stringify({
+          message: `成功创建 ${elements.length} 个元素`,
+          count: elements.length
         })
       } catch (e) {
         return JSON.stringify({ error: `参数解析失败: ${e}` })

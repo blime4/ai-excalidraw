@@ -84,6 +84,21 @@ function extractJsonObjects(text: string): { json: string; endIndex: number }[] 
 }
 
 /**
+ * 预处理文本：移除 markdown 代码块标记和 thinking 标签
+ */
+function preprocessText(text: string): string {
+  let result = text
+  // 移除 markdown 代码块开始标记（```json, ```javascript 等）
+  result = result.replace(/```\w*\n?/g, '')
+  // 移除 markdown 代码块结束标记
+  result = result.replace(/```/g, '')
+  // 移除 thinking 标签及其内容（包括不完整标签）
+  result = result.replace(/hla<thinking>[\s\S]*?<\/thinking>/g, '')
+  result = result.replace(/hla<thinking>[\s\S]*$/g, '')
+  return result
+}
+
+/**
  * 从文本中解析 Excalidraw 元素（纯 JSON 格式）
  * 只解析 JSON，不添加默认值（默认值由调用方根据是否为新建元素决定）
  * @param text 完整的累积文本
@@ -95,8 +110,9 @@ export function parseExcalidrawElements(
   processedLength: number = 0
 ): ParseResult {
   const elements: ParsedElement[] = []
-  const newText = text.slice(processedLength)
-  
+  const rawNewText = text.slice(processedLength)
+  const newText = preprocessText(rawNewText)
+
   // 提取所有完整的 JSON 对象
   const jsonObjects = extractJsonObjects(newText)
   let lastIndex = 0
