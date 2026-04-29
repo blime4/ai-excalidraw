@@ -238,8 +238,8 @@ export async function streamChat(
     { role: 'user', content: contextualMessage },
   ]
 
-  // 递归处理，支持多轮工具调用
-  await processChat(messages, finalConfig, onChunk, onError, toolExecutor)
+  // 递归处理，支持多轮工具调用（复杂图表可能需要多轮创建）
+  await processChat(messages, finalConfig, onChunk, onError, toolExecutor, 20)
 }
 
 /**
@@ -251,13 +251,14 @@ async function processChat(
   onChunk: (content: string) => void,
   onError?: (error: Error) => void,
   toolExecutor?: ToolExecutor,
-  maxToolCalls = 5  // 最大工具调用次数，防止无限循环
+  maxToolCalls = 20
 ): Promise<void> {
   try {
     const requestBody: Record<string, unknown> = {
       model: config.model,
       messages,
       stream: true,
+      max_tokens: 16384,
     }
 
     // 如果有工具执行器，添加工具定义
@@ -367,13 +368,19 @@ async function processChat(
     // 如果有工具调用，执行工具并继续对话
     if (toolCalls.size > 0 && toolExecutor && maxToolCalls > 0) {
       const toolCallsArray = Array.from(toolCalls.values())
-      
+
       // 添加助手消息（包含工具调用）
       messages.push({
         role: 'assistant',
         content: fullContent,
         tool_calls: toolCallsArray
       })
+
+      // 统计写操作数量（create/delete 消耗预算，get 不消耗）
+      const writeOps = toolCallsArray.filter(tc =>
+        tc.function.name === 'create_elements' || tc.function.name === 'delete_elements'
+      ).length
+      const hasGetOps = toolCallsArray.some(tc => tc.function.name === 'get_canvas_elements')
 
       // 执行每个工具调用并添加结果
       for (const tc of toolCallsArray) {
@@ -386,10 +393,17 @@ async function processChat(
       }
 
       // 提示用户正在处理
-      onChunk('\n\n[正在分析画布内容...]\n\n')
+      if (writeOps > 0) {
+        onChunk('\n\n[正在创建图形元素...]\n\n')
+      } else if (hasGetOps) {
+        onChunk('\n\n[正在分析画布内容...]\n\n')
+      }
 
-      // 递归调用继续对话
-      await processChat(messages, config, onChunk, onError, toolExecutor, maxToolCalls - 1)
+      // 递归调用继续对话（只有写操作消耗预算）
+      const remainingBudget = writeOps > 0 ? maxToolCalls - writeOps : maxToolCalls
+      if (remainingBudget >= 0) {
+        await processChat(messages, config, onChunk, onError, toolExecutor, remainingBudget)
+      }
     }
   } catch (error) {
     onError?.(error instanceof Error ? error : new Error(String(error)))
